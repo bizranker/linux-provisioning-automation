@@ -1,0 +1,179 @@
+Install Ubuntu 16.04 LTS Server with Preseed
+
+https://www.hiroom2.com/2016/05/19/ubuntu-16-04-debian-8-run-pxe-boot-server-for-automated-install/
+
+sudo apt-get install -y tftpd-hpa inetutils-inetd
+
+sudo vi /etc/default/tftpd-hpa
+
+Add the following lines at the bottom:
+
+RUN_DAEMON="yes"
+OPTIONS="-l -s /var/lib/tftpboot"
+
+sudo vi /etc/inetd.conf
+
+Add or modify the following line at the end:
+
+tftp    dgram   udp    wait    root    /usr/sbin/in.tftpd /usr/sbin/in.tftpd -s /var/lib/tftpboot
+
+Restart tftp:
+
+sudo systemctl restart tftpd-hpa
+
+Check tftp:
+
+sudo systemctl status tftpd-hpa
+
+Get the bits and put em in place:
+
+wget http://archive.ubuntu.com/ubuntu/ubuntu/dists/xenial/main/installer-amd64/current/images/netboot/netboot.tar.gz
+
+mkdir /home/bbills/netboot
+
+mv 
+
+sudo tar zxf netboot.tar.gz -C /home/bbills/netboot
+
+sudo cp -a /home/bbills/netboot/ubuntu-installer /var/lib/tftpboot
+
+cd /var/lib/tftpboot
+
+sudo cp /home/bbills/netboot/ubuntu-installer/amd64/pxelinux.0 .
+
+sudo cp /home/bbills/netboot/ubuntu-installer/amd64/boot-screens/ldlinux.c32 .
+
+sudo mkdir ./boot-screens
+
+sudo cp /home/bbills/netboot/ubuntu-installer/amd64/boot-screens/libcom32.c32 ./boot-screens/
+
+sudo cp /home/bbills/netboot/ubuntu-installer/amd64/boot-screens/libutil.c32 ./boot-screens/
+
+sudo cp /home/bbills/netboot/ubuntu-installer/amd64/boot-screens/vesamenu.c32 ./boot-screens/
+
+sudo mkdir /var/lib/tftpboot/pxelinux.cfg
+
+sudo vi /var/lib/tftpboot/boot-screens/syslinux.cfg
+
+path boot-screens
+include boot-screens/menu.cfg
+default boot-screens/vesamenu.c32
+prompt 0
+timeout 100
+
+cd /var/lib/tftpboot/pxelinux.cfg
+
+sudo ln -s ../boot-screens/syslinux.cfg default
+
+//////////////////////////////////////////////////
+
+Install dhcp:
+
+sudo apt-get install -y isc-dhcp-server
+
+sudo vi /etc/default/isc-dhcp-server
+
+INTERFACES="ens33"
+
+sudo vi /etc/dhcp/dhcpd.conf
+
+option domain-name "mj12net.local";
+option domain-name-servers ns.mj12net.local;
+default-lease-time 600;
+max-lease-time 7200;
+allow booting;
+allow bootp;
+option option-128 code 128 = string;
+option option-129 code 129 = text;
+next-server 192.168.134.3;
+filename "pxelinux.0";
+authoritative;
+subnet 192.168.134.0 netmask 255.255.255.0 {
+range 192.168.134.128 192.168.134.254;
+option domain-name-servers ns.mj12net.local;
+option domain-name "mj12net.local";
+option routers 192.168.134.2;
+option broadcast-address 192.168.134.255;
+}
+host ansible-server {
+  hardware ethernet 00:50:56:3E:3C:65;
+  fixed-address 192.168.134.128;
+}
+host mirror-server {
+  hardware ethernet 00:50:56:37:FB:C8;
+  fixed-address 192.168.134.129;
+}
+
+
+sudo systemctl restart isc-dhcp-server
+
+sudo systemctl status isc-dhcp-server
+
+/////////////////////////////////////
+
+sudo vi /var/lib/tftpboot/boot-screens/menu.cfg
+
+
+menu hshift 13
+menu width 49
+menu margin 8
+menu tabmsg
+
+menu title Installer boot menu
+
+label auto-ubuntu-16.04
+        menu label ^Ubuntu 16.04 automated install
+        kernel ubuntu-installer/amd64/linux
+        append auto=true priority=critical vga=788 initrd=ubuntu-installer/amd64/initrd.gz preseed/url=tftp://192.168.134.3/preseed/ubuntu-16.04-preseed.cfg preseed/interactive=false
+
+menu begin ubuntu-16.04
+        menu title Ubuntu 16.04
+        label mainmenu
+                menu label ^Back..
+                menu exit
+        include ubuntu-installer/amd64/boot-screens/menu.cfg
+menu end
+
+////////////////////////////////////////////////////////////
+
+sudo mkdir /var/lib/tftpboot/preseed
+
+////////////////////////////////////////////////////////////
+
+d-i network-console/authorized_keys_url string http://ns.mj12net.org/bbills/ssh-key/id_rsa.pub
+d-i debian-installer/locale string en_US
+d-i debian-installer/language string en
+d-i debian-installer/country string US
+d-i keyboard-configuration/xkb-keymap select us
+d-i passwd/user-fullname string Brian Bills
+d-i passwd/username string bbills
+d-i passwd/root-login boolean false
+d-i passwd/user-password-crypted password $1$GJqmkpqr$whGL7MgdbFrty3X3Xnk5s1
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_hostname string unassigned-hostname
+d-i netcfg/get_domain string unassigned-domain
+d-i mirror/country string manual
+d-i mirror/http/hostname string http://us.archive.ubuntu.com
+d-i mirror/http/directory string /ubuntu
+d-i mirror/http/proxy string
+d-i clock-setup/utc boolean true
+d-i clock-setup/ntp boolean true
+d-i time/zone string US/Pacific
+d-i partman/confirm boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm_nooverwrite boolean true
+d-i partman-auto/disk string /dev/[sv]da
+d-i partman-auto/method string lvm
+d-i partman-auto/choose_recipe select atomic
+d-i partman-lvm/device_remove_lvm boolean true
+d-i partman-lvm/confirm boolean true
+d-i partman-lvm/confirm_nooverwrite boolean true
+d-i partman-auto-lvm/guided_size string max
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i grub-installer/grub2_instead_of_grub_legacy boolean true
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/bootdev string /dev/[sv]da
+d-i pkgsel/update-policy select none
+d-i pkgsel/include string openssh-server puppet curl wget
+d-i preseed/late_command string in-target wget --output-document=/tmp/run.sh http://192.168.134.3/run.sh; in-target chmod +x /tmp/run.sh; in-target /bin/bash -x /tmp/run.sh
+d-i finish-install/reboot_in_progress note
